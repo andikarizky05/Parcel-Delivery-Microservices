@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Databases
+  package-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: package_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - package_db_data:/var/lib/postgresql/data
+    networks:
+      - parcel-network
+
+  delivery-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: delivery_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - delivery_db_data:/var/lib/postgresql/data
+    networks:
+      - parcel-network
+
+  user-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: user_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    networks:
+      - parcel-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - parcel-network
+
+  # Hasura GraphQL Engine
+  hasura:
+    image: hasura/graphql-engine:v2.36.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - package-db
+      - delivery-db
+      - user-db
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgres@package-db:5432/package_service
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ADMIN_SECRET: adminsecret
+    networks:
+      - parcel-network
+
+  # Package Service
+  package-service:
+    build:
+      context: ./package-service
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5000"
+    depends_on:
+      - package-db
+      - rabbitmq
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@package-db:5432/package_service
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672/
+    networks:
+      - parcel-network
+
+  # Delivery Service
+  delivery-service:
+    build:
+      context: ./delivery-service
+      dockerfile: Dockerfile
+    ports:
+      - "5002:5000"
+    depends_on:
+      - delivery-db
+      - rabbitmq
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@delivery-db:5432/delivery_service
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672/
+    networks:
+      - parcel-network
+
+  # User Service
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    ports:
+      - "5003:5000"
+    depends_on:
+      - user-db
+      - rabbitmq
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@user-db:5432/user_service
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672/
+    networks:
+      - parcel-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:5000"
+    depends_on:
+      - package-service
+      - delivery-service
+      - user-service
+    environment:
+      PACKAGE_SERVICE_URL: http://package-service:5000
+      DELIVERY_SERVICE_URL: http://delivery-service:5000
+      USER_SERVICE_URL: http://user-service:5000
+    networks:
+      - parcel-network
+
+volumes:
+  package_db_data:
+  delivery_db_data:
+  user_db_data:
+  rabbitmq_data:
+
+networks:
+  parcel-network:
+    driver: bridge
